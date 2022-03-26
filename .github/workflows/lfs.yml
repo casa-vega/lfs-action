@@ -1,0 +1,67 @@
+name: LFS Migration
+
+on:
+  workflow_dispatch:
+    inputs:
+      files:
+        description: 'A comma seperated list of file extensions to convert to LFS (e.g. *.file1, *.file2)'     
+        required: true
+        default: ''
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Create local tracking branches
+        run: |
+          git fetch --unshallow
+          for branch in $(git for-each-ref --shell --format="%(refname)" | sed "s@'@@g" | grep -v 'main\|HEAD'); do 
+            shortref=$(echo "${branch}" | sed 's@refs/remotes/origin/@@g'); 
+            git branch --track "${shortref}" "${branch}";
+          done
+
+      - name: LFS migration / import
+        run: |
+          git lfs migrate import --everything --include="${{ github.event.inputs.files }}"
+
+      - name: inspect .gitattributes file
+        run: |
+          cat .gitattributes
+
+      - name: git expire reflog
+        run: |
+          git reflog expire --expire=now --all
+
+      - name: git garbage collect / aggressive
+        run: |
+          git gc --prune=now --aggressive
+
+      - name: Push LFS files to origin
+        run: |
+          git lfs push origin --all
+
+      - name: Force push default branch
+        run: |
+          git push origin --force
+
+      # in theory we could push --all however any issues that surface could be branch related 
+      # and in my experience while it's a little quicker to try everything, any failure will 
+      # result in signigant loss of time, also this allows us to push everything else if a single
+      # issue is found.
+      - name: Push everything in each branch
+        run: | 
+          set GIT_LFS_SKIP_PUSH=1
+          for branch in $(git for-each-ref --shell --format="%(refname)" | sed "s@'@@g" | grep -v 'main\|HEAD'); do
+              shortref=$(echo "${branch}" | sed 's@refs/remotes/origin/@@g');
+              git checkout "${shortref}";
+              git reset --hard;
+              git clean -f -d;
+              git push origin HEAD:"${shortref}" --force;
+          done
+      - name: Push verify
+        run: |
+          git lfs push origin --all
+          git push origin --all
