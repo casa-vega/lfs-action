@@ -78,6 +78,7 @@ jobs:
               git checkout "${branch}";
               git reset --hard;
               git clean -f -d;
+              git pull
               git push origin HEAD:"${branch}" --force;
           done
       
