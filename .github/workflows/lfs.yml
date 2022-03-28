@@ -41,12 +41,10 @@ jobs:
             branches+=("${shortref}");
           done
 
-      # migrate workflow_dispatch input files to LFS
       - name: LFS migration / import
         run: |
           git lfs migrate import --everything --include="${{ github.event.inputs.files }}"
 
-      # validate .gitattributes file      
       - name: Inspect .gitattributes file
         run: |
           cat .gitattributes
@@ -83,7 +81,6 @@ jobs:
               git push origin HEAD:"${branch}" --force;
           done
       
-      # push everything, no errors
       - name: Push verify
         run: |
           git lfs push origin --all
