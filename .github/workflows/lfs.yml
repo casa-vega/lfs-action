@@ -4,38 +4,58 @@ on:
   workflow_dispatch:
     inputs:
       files:
-        description: 'A comma seperated list of file extensions to convert to LFS (e.g. *.file1, *.file2)'     
+        description: 'A comma separated list of file extensions to convert to LFS (e.g. *.png,*.exe)'     
         required: true
         default: ''
 
 jobs:
   build:
+    # it is recommend to use a self hosted linux runner for LFS migrations. The
+    # more cores, mem and disks/iops you have, the faster the migration can be.
+    # This will also give you the ability to inspect the repo itself if an error
+    # occurs.
+    #
+    # please the following on time limitations:
+    # https://docs.github.com/en/actions/learn-github-actions/usage-limits-billing-and-administration
+    # 
+    # Job execution time: Each job in a workflow can run for up to 6 hours of 
+    # execution time. If a job reaches this limit, the job is terminated and 
+    # fails to complete.
+    #
+    # Workflow run time: Each workflow run is limited to 72 hours. If a workflow
+    # run reaches this limit, the workflow run is cancelled.
+
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v2
 
+      # fetch the entire repository and create tracking branches
       - name: Create local tracking branches
         run: |
           git fetch --unshallow
+          branches=()
           for branch in $(git for-each-ref --shell --format="%(refname)" | sed "s@'@@g" | grep -v 'main\|HEAD'); do 
             shortref=$(echo "${branch}" | sed 's@refs/remotes/origin/@@g'); 
             git branch --track "${shortref}" "${branch}";
+            branches+=("${shortref}");
           done
 
+      # migrate workflow_dispatch input files to LFS
       - name: LFS migration / import
         run: |
           git lfs migrate import --everything --include="${{ github.event.inputs.files }}"
 
-      - name: inspect .gitattributes file
+      # validate .gitattributes file      
+      - name: Inspect .gitattributes file
         run: |
           cat .gitattributes
 
-      - name: git expire reflog
+      - name: Expire reflog
         run: |
           git reflog expire --expire=now --all
 
-      - name: git garbage collect / aggressive
+      - name: Garbage collect / aggressive
         run: |
           git gc --prune=now --aggressive
 
@@ -47,20 +67,23 @@ jobs:
         run: |
           git push origin --force
 
-      # in theory we could push --all however any issues that surface could be branch related 
-      # and in my experience while it's a little quicker to try everything, any failure will 
-      # result in signigant loss of time, also this allows us to push everything else if a single
-      # issue is found.
-      - name: Push everything in each branch
+      # In theory we could push --all however any issues that surface could be
+      # branch related and in my experience while it's a little quicker to try 
+      # everything, any failure could result in significant loss of time, also 
+      # this allows us to push anything else if a single issue is found.
+
+      # we also turn off the LFS push here since we've already pushed everything
+      - name: Push each branch
         run: | 
           set GIT_LFS_SKIP_PUSH=1
-          for branch in $(git for-each-ref --shell --format="%(refname)" | sed "s@'@@g" | grep -v 'main\|HEAD'); do
-              shortref=$(echo "${branch}" | sed 's@refs/remotes/origin/@@g');
-              git checkout "${shortref}";
+          for branch in "${branches[@]}"; do
+              git checkout "${branch}";
               git reset --hard;
               git clean -f -d;
-              git push origin HEAD:"${shortref}" --force;
+              git push origin HEAD:"${branch}" --force;
           done
+      
+      # push everything, no errors
       - name: Push verify
         run: |
           git lfs push origin --all
